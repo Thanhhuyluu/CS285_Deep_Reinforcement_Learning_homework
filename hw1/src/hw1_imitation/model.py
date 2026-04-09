@@ -46,22 +46,42 @@ class MSEPolicy(BasePolicy):
         hidden_dims: tuple[int, ...] = (128, 128),
     ) -> None:
         super().__init__(state_dim, action_dim, chunk_size)
+        self.state_dim = state_dim 
+        self.action_dim = action_dim
+        self.chunk_size = chunk_size
+        self.hidden_dims = hidden_dims
+        self.layers = []
+        for h in hidden_dims:
+            self.layers.append(nn.Linear(state_dim, h))
+            self.layers.append(nn.ReLU())
+            state_dim = h
+
+        self.layers.append(nn.Linear(state_dim, chunk_size * action_dim))
+
+        self.model = nn.Sequential(
+            *self.layers
+        ) 
 
     def compute_loss(
         self,
-        state: torch.Tensor,
-        action_chunk: torch.Tensor,
+        state: torch.Tensor, # (B, state_dim)
+        action_chunk: torch.Tensor, # (B, chunk_size, action_dim)
     ) -> torch.Tensor:
-        raise NotImplementedError
-
+        batch_size = state.shape[0] 
+        flat = self.model(state)                                             # (B, chunk_size * action_dim)
+        prediction = flat.view(batch_size, self.chunk_size, self.action_dim) # reshape to (B, chunk_size, action_dim)
+        return torch.mean((prediction - action_chunk) ** 2) 
+        
     def sample_actions(
         self,
         state: torch.Tensor,
         *,
         num_steps: int = 10,
     ) -> torch.Tensor:
-        raise NotImplementedError
-
+        batch_size = state.shape[0]  
+        flat = self.model(state) 
+        prediction = flat.view(batch_size, self.chunk_size, self.action_dim) 
+        return prediction
 
 class FlowMatchingPolicy(BasePolicy):
     """Predicts action chunks with a flow matching loss."""
