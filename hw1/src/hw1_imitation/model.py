@@ -95,13 +95,44 @@ class FlowMatchingPolicy(BasePolicy):
         hidden_dims: tuple[int, ...] = (128, 128),
     ) -> None:
         super().__init__(state_dim, action_dim, chunk_size)
+        
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.chunk_size = chunk_size
+        self.hidden_dims = hidden_dims
+
+        self.flat_action_dim = self.action_dim * self.chunk_size
+        self.in_dim = self.state_dim + self.flat_action_dim + 1
+
+        layers: list[nn.Module] = []
+        temp = self.in_dim
+        for h in hidden_dims:
+            layers.append(nn.Linear(temp, h))
+            layers.append(nn.ReLU())
+            temp = h
+        layers.append(nn.Linear(temp, self.flat_action_dim))
+        self.net = nn.Sequential(*layers)
+
+
+
 
     def compute_loss(
         self,
         state: torch.Tensor,
         action_chunk: torch.Tensor,
     ) -> torch.Tensor:
-        raise NotImplementedError
+         
+        batch_size = state.shape[0]
+        device = state.device
+        A_t = action_chunk.view(batch_size, self.flat_action_dim)
+        A_t0 = torch.rand(batch_size, self.flat_action_dim, device = device)
+        tau = torch.rand(batch_size, 1, device=device)
+        x_tau = (1.0 - tau) * A_t0 + tau * A_t
+        v_target = A_t - A_t0
+        input = torch.cat([state, x_tau, tau], dim=1)
+        v_pred = self.net(input)
+        return torch.mean((v_pred - v_target) ** 2)
+
 
     def sample_actions(
         self,
@@ -109,8 +140,20 @@ class FlowMatchingPolicy(BasePolicy):
         *,
         num_steps: int = 10,
     ) -> torch.Tensor:
-        raise NotImplementedError
+        
+        device = state.device
+        batch_size = state.shape[0]
+        A_t0 = torch.rand(batch_size, self.flat_action_dim, device=device)
 
+        dt = 1.0 / float(num_steps)
+        A_t_tau = A_t0
+
+        for t in range(num_steps):
+            tau = torch.full((batch_size, 1), t * dt, device=device)
+            input = torch.cat([state, A_t_tau, tau], dim=1)
+            v_pred = self.net(input)
+            A_t_tau = A_t_tau + dt * v_pred
+        return A_t_tau.view(batch_size, self.chunk_size, self.action_dim) 
 
 PolicyType: TypeAlias = Literal["mse", "flow"]
 
